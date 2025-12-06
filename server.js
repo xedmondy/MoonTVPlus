@@ -18,6 +18,7 @@ class WatchRoomServer {
     this.rooms = new Map();
     this.members = new Map();
     this.socketToRoom = new Map();
+    this.roomDeletionTimers = new Map(); // 房间延迟删除定时器
     this.cleanupInterval = null;
     this.setupEventHandlers();
     this.startCleanupTimer();
@@ -32,6 +33,7 @@ class WatchRoomServer {
         try {
           const roomId = this.generateRoomId();
           const userId = socket.id;
+          const ownerToken = this.generateRoomId(); // 生成房主令牌
 
           const room = {
             id: roomId,
@@ -41,6 +43,7 @@ class WatchRoomServer {
             isPublic: data.isPublic,
             ownerId: userId,
             ownerName: data.userName,
+            ownerToken: ownerToken, // 保存房主令牌
             memberCount: 1,
             currentState: null,
             createdAt: Date.now(),
@@ -86,10 +89,29 @@ class WatchRoomServer {
           }
 
           const userId = socket.id;
+          let isOwner = false;
+
+          // 检查是否是房主重连（通过 ownerToken 验证）
+          if (data.ownerToken && data.ownerToken === room.ownerToken) {
+            isOwner = true;
+            // 更新房主的 socket.id
+            room.ownerId = userId;
+            room.lastOwnerHeartbeat = Date.now();
+            this.rooms.set(data.roomId, room);
+            console.log(`[WatchRoom] Owner ${data.userName} reconnected to room ${data.roomId}`);
+          }
+
+          // 取消房间的删除定时器（如果有人重连）
+          if (this.roomDeletionTimers.has(data.roomId)) {
+            console.log(`[WatchRoom] Cancelling deletion timer for room ${data.roomId}`);
+            clearTimeout(this.roomDeletionTimers.get(data.roomId));
+            this.roomDeletionTimers.delete(data.roomId);
+          }
+
           const member = {
             id: userId,
             name: data.userName,
-            isOwner: false,
+            isOwner: isOwner,
             lastHeartbeat: Date.now(),
           };
 
@@ -104,13 +126,13 @@ class WatchRoomServer {
             roomId: data.roomId,
             userId,
             userName: data.userName,
-            isOwner: false,
+            isOwner: isOwner,
           });
 
           socket.join(data.roomId);
           socket.to(data.roomId).emit('room:member-joined', member);
 
-          console.log(`[WatchRoom] User ${data.userName} joined room ${data.roomId}`);
+          console.log(`[WatchRoom] User ${data.userName} joined room ${data.roomId}${isOwner ? ' (as owner)' : ''}`);
 
           const members = Array.from(roomMembers?.values() || []);
           callback({ success: true, room, members });
@@ -131,37 +153,59 @@ class WatchRoomServer {
         callback(publicRooms);
       });
 
-      // 播放状态更新
+      // 播放状态更新（任何成员都可以触发同步）
       socket.on('play:update', (state) => {
+        console.log(`[WatchRoom] Received play:update from ${socket.id}:`, state);
         const roomInfo = this.socketToRoom.get(socket.id);
-        if (!roomInfo || !roomInfo.isOwner) return;
+        if (!roomInfo) {
+          console.log('[WatchRoom] No room info for socket, ignoring play:update');
+          return;
+        }
 
         const room = this.rooms.get(roomInfo.roomId);
         if (room) {
           room.currentState = state;
           this.rooms.set(roomInfo.roomId, room);
+          console.log(`[WatchRoom] Broadcasting play:update to room ${roomInfo.roomId} from ${roomInfo.userName}`);
           socket.to(roomInfo.roomId).emit('play:update', state);
+        } else {
+          console.log('[WatchRoom] Room not found for play:update');
         }
       });
 
       // 播放进度跳转
       socket.on('play:seek', (currentTime) => {
+        console.log(`[WatchRoom] Received play:seek from ${socket.id}:`, currentTime);
         const roomInfo = this.socketToRoom.get(socket.id);
-        if (!roomInfo) return;
+        if (!roomInfo) {
+          console.log('[WatchRoom] No room info for socket, ignoring play:seek');
+          return;
+        }
+        console.log(`[WatchRoom] Broadcasting play:seek to room ${roomInfo.roomId}`);
         socket.to(roomInfo.roomId).emit('play:seek', currentTime);
       });
 
       // 播放
       socket.on('play:play', () => {
+        console.log(`[WatchRoom] Received play:play from ${socket.id}`);
         const roomInfo = this.socketToRoom.get(socket.id);
-        if (!roomInfo) return;
+        if (!roomInfo) {
+          console.log('[WatchRoom] No room info for socket, ignoring play:play');
+          return;
+        }
+        console.log(`[WatchRoom] Broadcasting play:play to room ${roomInfo.roomId}`);
         socket.to(roomInfo.roomId).emit('play:play');
       });
 
       // 暂停
       socket.on('play:pause', () => {
+        console.log(`[WatchRoom] Received play:pause from ${socket.id}`);
         const roomInfo = this.socketToRoom.get(socket.id);
-        if (!roomInfo) return;
+        if (!roomInfo) {
+          console.log('[WatchRoom] No room info for socket, ignoring play:pause');
+          return;
+        }
+        console.log(`[WatchRoom] Broadcasting play:pause to room ${roomInfo.roomId}`);
         socket.to(roomInfo.roomId).emit('play:pause');
       });
 
@@ -270,12 +314,12 @@ class WatchRoomServer {
     if (!roomInfo) return;
 
     const { roomId, userId, isOwner } = roomInfo;
+    const room = this.rooms.get(roomId);
     const roomMembers = this.members.get(roomId);
 
     if (roomMembers) {
       roomMembers.delete(userId);
 
-      const room = this.rooms.get(roomId);
       if (room) {
         room.memberCount = roomMembers.size;
         this.rooms.set(roomId, room);
@@ -283,12 +327,44 @@ class WatchRoomServer {
 
       socket.to(roomId).emit('room:member-left', userId);
 
+      // 如果是房主主动离开，解散房间并踢出所有成员
       if (isOwner) {
-        console.log(`[WatchRoom] Owner left room ${roomId}, will auto-delete after 5 minutes`);
-      }
+        console.log(`[WatchRoom] Owner actively left room ${roomId}, disbanding room`);
 
-      if (roomMembers.size === 0) {
-        this.deleteRoom(roomId);
+        // 通知所有成员房间被解散
+        socket.to(roomId).emit('room:deleted', { reason: 'owner_left' });
+
+        // 强制所有成员离开房间
+        const members = Array.from(roomMembers.keys());
+        members.forEach(memberId => {
+          this.socketToRoom.delete(memberId);
+        });
+
+        // 立即删除房间（跳过通知，因为上面已经发送了）
+        this.deleteRoom(roomId, true);
+
+        // 清除可能存在的删除定时器
+        if (this.roomDeletionTimers.has(roomId)) {
+          clearTimeout(this.roomDeletionTimers.get(roomId));
+          this.roomDeletionTimers.delete(roomId);
+        }
+      } else {
+        // 普通成员离开，房间为空时延迟删除
+        if (roomMembers.size === 0) {
+          console.log(`[WatchRoom] Room ${roomId} is now empty, will delete in 30 seconds if no one rejoins`);
+
+          const deletionTimer = setTimeout(() => {
+            // 再次检查房间是否仍然为空
+            const currentRoomMembers = this.members.get(roomId);
+            if (currentRoomMembers && currentRoomMembers.size === 0) {
+              console.log(`[WatchRoom] Room ${roomId} deletion timer expired, deleting room`);
+              this.deleteRoom(roomId);
+              this.roomDeletionTimers.delete(roomId);
+            }
+          }, 30000); // 30秒后删除
+
+          this.roomDeletionTimers.set(roomId, deletionTimer);
+        }
       }
     }
 
@@ -296,9 +372,14 @@ class WatchRoomServer {
     this.socketToRoom.delete(socket.id);
   }
 
-  deleteRoom(roomId) {
+  deleteRoom(roomId, skipNotify = false) {
     console.log(`[WatchRoom] Deleting room ${roomId}`);
-    this.io.to(roomId).emit('room:deleted');
+
+    // 如果不跳过通知，则发送 room:deleted 事件
+    if (!skipNotify) {
+      this.io.to(roomId).emit('room:deleted');
+    }
+
     this.rooms.delete(roomId);
     this.members.delete(roomId);
   }
@@ -329,6 +410,12 @@ class WatchRoomServer {
     if (this.cleanupInterval) {
       clearInterval(this.cleanupInterval);
     }
+
+    // 清理所有房间删除定时器
+    for (const timer of this.roomDeletionTimers.values()) {
+      clearTimeout(timer);
+    }
+    this.roomDeletionTimers.clear();
   }
 }
 

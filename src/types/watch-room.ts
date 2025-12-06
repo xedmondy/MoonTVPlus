@@ -8,6 +8,7 @@ export interface Room {
   isPublic: boolean;
   ownerId: string;
   ownerName: string;
+  ownerToken: string; // 房主令牌，用于重连时验证身份
   memberCount: number;
   currentState: PlayState | LiveState | null;
   createdAt: number;
@@ -28,6 +29,8 @@ export interface PlayState {
   isPlaying: boolean;
   videoId: string;
   videoName: string;
+  videoYear?: string;
+  searchTitle?: string;
   episode?: number;
   source: string;
 }
@@ -90,6 +93,7 @@ export interface ClientToServerEvents {
     roomId: string;
     password?: string;
     userName: string;
+    ownerToken?: string; // 房主令牌，用于重连时恢复房主身份
   }, callback: (response: { success: boolean; room?: Room; members?: Member[]; error?: string }) => void) => void;
 
   'room:leave': () => void;
@@ -128,5 +132,6 @@ export interface StoredRoomInfo {
   isOwner: boolean;
   userName: string;
   password?: string;
+  ownerToken?: string; // 房主令牌
   timestamp: number;
 }

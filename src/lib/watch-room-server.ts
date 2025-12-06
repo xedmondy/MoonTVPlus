@@ -33,6 +33,7 @@ export class WatchRoomServer {
         try {
           const roomId = this.generateRoomId();
           const userId = socket.id;
+          const ownerToken = this.generateRoomId(); // 生成房主令牌
 
           const room: Room = {
             id: roomId,
@@ -42,6 +43,7 @@ export class WatchRoomServer {
             isPublic: data.isPublic,
             ownerId: userId,
             ownerName: data.userName,
+            ownerToken: ownerToken, // 保存房主令牌
             memberCount: 1,
             currentState: null,
             createdAt: Date.now(),
@@ -324,13 +326,13 @@ export class WatchRoomServer {
       const now = Date.now();
       const timeout = 5 * 60 * 1000; // 5分钟
 
-      for (const [roomId, room] of this.rooms.entries()) {
+      this.rooms.forEach((room, roomId) => {
         // 检查房主是否超时
         if (now - room.lastOwnerHeartbeat > timeout) {
           console.log(`[WatchRoom] Room ${roomId} owner timeout, deleting...`);
           this.deleteRoom(roomId);
         }
-      }
+      });
     }, 30000); // 每30秒检查一次
   }
 

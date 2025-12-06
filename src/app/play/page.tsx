@@ -6,6 +6,8 @@ import { Heart } from 'lucide-react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { Suspense, useEffect, useRef, useState } from 'react';
 
+import { usePlaySync } from '@/hooks/usePlaySync';
+
 
 import {
   deleteFavorite,
@@ -328,7 +330,28 @@ function PlayPageClient() {
     needPreferRef.current = needPrefer;
   }, [needPrefer]);
   // 集数相关
-  const [currentEpisodeIndex, setCurrentEpisodeIndex] = useState(0);
+  const [currentEpisodeIndex, setCurrentEpisodeIndex] = useState(() => {
+    const episodeParam = searchParams.get('episode');
+    if (episodeParam) {
+      const episode = parseInt(episodeParam, 10);
+      return episode > 0 ? episode - 1 : 0; // URL 中是 1-based，内部是 0-based
+    }
+    return 0;
+  });
+
+  // 监听 URL 参数变化，更新集数索引（用于房员跟随换集）
+  useEffect(() => {
+    const episodeParam = searchParams.get('episode');
+    if (episodeParam) {
+      const episode = parseInt(episodeParam, 10);
+      const newIndex = episode > 0 ? episode - 1 : 0;
+      console.log('[PlayPage] Checking episode from URL:', { urlEpisode: episode, currentIndex: currentEpisodeIndex, newIndex });
+      if (newIndex !== currentEpisodeIndex) {
+        console.log('[PlayPage] URL episode changed, updating index to:', newIndex);
+        setCurrentEpisodeIndex(newIndex);
+      }
+    }
+  }, [searchParams, currentEpisodeIndex]);
 
   const currentSourceRef = useRef(currentSource);
   const currentIdRef = useRef(currentId);
@@ -429,6 +452,9 @@ function PlayPageClient() {
     'initing' | 'sourceChanging'
   >('initing');
 
+  // 播放器就绪状态（用于触发 usePlaySync 的事件监听器设置）
+  const [playerReady, setPlayerReady] = useState(false);
+
   // 播放进度保存相关
   const saveIntervalRef = useRef<NodeJS.Timeout | null>(null);
   const lastSaveTimeRef = useRef<number>(0);
@@ -438,6 +464,19 @@ function PlayPageClient() {
 
   // Wake Lock 相关
   const wakeLockRef = useRef<WakeLockSentinel | null>(null);
+
+  // 观影室同步功能
+  const playSync = usePlaySync({
+    artPlayerRef,
+    videoId: currentId || '',  // 使用 currentId 状态而不是 searchParams
+    videoName: videoTitle || detail?.title || '正在加载...',
+    videoYear: videoYear || detail?.year || '',
+    searchTitle: searchTitle || '',
+    currentEpisode: currentEpisodeIndex + 1,
+    currentSource: currentSource || '',
+    videoUrl: videoUrl || '',
+    playerReady: playerReady,  // 传递播放器就绪状态
+  });
 
   // -----------------------------------------------------------------------------
   // 工具函数（Utils）
@@ -2721,6 +2760,13 @@ function PlayPageClient() {
             html: '<i class="art-icon flex"><svg width="22" height="22" viewBox="0 0 22 22" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M6 18l8.5-6L6 6v12zM16 6v12h2V6h-2z" fill="currentColor"/></svg></i>',
             tooltip: '播放下一集',
             click: function () {
+              // 房员禁用下一集按钮
+              if (playSync.shouldDisableControls) {
+                if (artPlayerRef.current) {
+                  artPlayerRef.current.notice.show = '房员无法切换集数，请等待房主操作';
+                }
+                return;
+              }
               handleNextEpisode();
             },
           },
@@ -2730,6 +2776,10 @@ function PlayPageClient() {
       // 监听播放器事件
       artPlayerRef.current.on('ready', async () => {
         setError(null);
+
+        // 标记播放器已就绪，触发 usePlaySync 设置事件监听器
+        setPlayerReady(true);
+        console.log('[PlayPage] Player ready, triggering sync setup');
 
         // 从 art.storage 读取弹幕设置并应用
         if (artPlayerRef.current) {
@@ -2905,8 +2955,17 @@ function PlayPageClient() {
         }
       });
 
-      // 监听视频播放结束事件，自动播放下一集
+      // 监听视频播放结束事件，自动播放下一集（房员禁用）
       artPlayerRef.current.on('video:ended', () => {
+        // 房员禁用自动播放下一集
+        if (playSync.shouldDisableControls) {
+          console.log('[PlayPage] Member cannot auto-play next episode');
+          if (artPlayerRef.current) {
+            artPlayerRef.current.notice.show = '等待房主切换下一集';
+          }
+          return;
+        }
+
         const d = detailRef.current;
         const idx = currentEpisodeIndexRef.current;
         if (d && d.episodes && idx < d.episodes.length - 1) {
@@ -3686,18 +3745,29 @@ function PlayPageClient() {
 
             {/* 选集和换源 - 在移动端始终显示，在 lg 及以上可折叠 */}
             <div
-              className={`h-[300px] lg:h-full md:overflow-hidden transition-all duration-300 ease-in-out ${
+              className={`h-[300px] lg:h-full md:overflow-hidden transition-all duration-300 ease-in-out relative ${
                 isEpisodeSelectorCollapsed
                   ? 'md:col-span-1 lg:hidden lg:opacity-0 lg:scale-95'
                   : 'md:col-span-1 lg:opacity-100 lg:scale-100'
               }`}
             >
+              {/* 观影室房员禁用层 */}
+              {playSync.isInRoom && playSync.shouldDisableControls && (
+                <div className="absolute inset-0 z-10 flex items-center justify-center bg-black/60 backdrop-blur-sm">
+                  <div className="text-center p-4">
+                    <p className="text-white text-lg font-bold mb-2">👥 观影室模式</p>
+                    <p className="text-gray-300 text-sm">
+                      {playSync.isOwner ? '您是房主，可以控制播放' : '房主控制中，无法切换集数和播放源'}
+                    </p>
+                  </div>
+                </div>
+              )}
               <EpisodeSelector
                 totalEpisodes={totalEpisodes}
                 episodes_titles={detail?.episodes_titles || []}
                 value={currentEpisodeIndex + 1}
-                onChange={handleEpisodeChange}
-                onSourceChange={handleSourceChange}
+                onChange={playSync.shouldDisableControls ? () => {} : handleEpisodeChange}
+                onSourceChange={playSync.shouldDisableControls ? () => {} : handleSourceChange}
                 currentSource={currentSource}
                 currentId={currentId}
                 videoTitle={searchTitle || videoTitle}

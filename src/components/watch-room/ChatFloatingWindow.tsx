@@ -1,8 +1,8 @@
-// 全局聊天悬浮窗
+// 全局聊天悬浮窗和房间信息按钮
 'use client';
 
 import { useState, useEffect, useRef } from 'react';
-import { MessageCircle, X, Send, Smile, Minimize2, Maximize2 } from 'lucide-react';
+import { MessageCircle, X, Send, Smile, Minimize2, Maximize2, Info, Users, LogOut, XCircle } from 'lucide-react';
 import { useWatchRoomContextSafe } from '@/components/WatchRoomProvider';
 
 const EMOJI_LIST = ['😀', '😂', '😍', '🥰', '😎', '🤔', '👍', '👏', '🎉', '❤️', '🔥', '⭐'];
@@ -13,6 +13,7 @@ export default function ChatFloatingWindow() {
   const [isMinimized, setIsMinimized] = useState(false);
   const [message, setMessage] = useState('');
   const [showEmojiPicker, setShowEmojiPicker] = useState(false);
+  const [showRoomInfo, setShowRoomInfo] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   // 自动滚动到底部
@@ -27,7 +28,7 @@ export default function ChatFloatingWindow() {
     return null;
   }
 
-  const { chatMessages, sendChatMessage, members, isOwner } = watchRoom;
+  const { chatMessages, sendChatMessage, members, isOwner, currentRoom, leaveRoom } = watchRoom;
 
   const handleSendMessage = () => {
     if (!message.trim()) return;
@@ -57,51 +58,222 @@ export default function ChatFloatingWindow() {
     });
   };
 
-  // 悬浮按钮
-  if (!isOpen) {
+  const handleLeaveRoom = () => {
+    if (confirm(isOwner ? '确定要解散房间吗？所有成员将被踢出房间。' : '确定要退出房间吗？')) {
+      leaveRoom();
+      setShowRoomInfo(false);
+    }
+  };
+
+  // 悬浮按钮组
+  if (!isOpen && !showRoomInfo) {
     return (
-      <button
-        onClick={() => setIsOpen(true)}
-        className="fixed bottom-20 right-4 z-[700] flex h-14 w-14 items-center justify-center rounded-full bg-green-500 text-white shadow-2xl transition-all hover:scale-110 hover:bg-green-600 md:bottom-4"
-        aria-label="打开聊天"
-      >
-        <MessageCircle className="h-6 w-6" />
-        {chatMessages.length > 0 && (
-          <span className="absolute right-0 top-0 flex h-5 w-5 items-center justify-center rounded-full bg-red-500 text-xs font-bold">
-            {chatMessages.length > 99 ? '99+' : chatMessages.length}
-          </span>
-        )}
-      </button>
+      <div className="fixed bottom-20 right-4 z-[700] flex flex-col gap-3 md:bottom-4">
+        {/* 房间信息按钮 */}
+        <button
+          onClick={() => setShowRoomInfo(true)}
+          className="flex h-14 w-14 items-center justify-center rounded-full bg-blue-500 text-white shadow-2xl transition-all hover:scale-110 hover:bg-blue-600"
+          aria-label="房间信息"
+        >
+          <Info className="h-6 w-6" />
+        </button>
+
+        {/* 聊天按钮 */}
+        <button
+          onClick={() => setIsOpen(true)}
+          className="flex h-14 w-14 items-center justify-center rounded-full bg-green-500 text-white shadow-2xl transition-all hover:scale-110 hover:bg-green-600"
+          aria-label="打开聊天"
+        >
+          <MessageCircle className="h-6 w-6" />
+          {chatMessages.length > 0 && (
+            <span className="absolute right-0 top-0 flex h-5 w-5 items-center justify-center rounded-full bg-red-500 text-xs font-bold">
+              {chatMessages.length > 99 ? '99+' : chatMessages.length}
+            </span>
+          )}
+        </button>
+      </div>
+    );
+  }
+
+  // 房间信息模态框
+  if (showRoomInfo) {
+    return (
+      <>
+        {/* 背景遮罩 */}
+        <div
+          className='fixed inset-0 bg-black/50 backdrop-blur-sm z-[1000]'
+          onClick={() => setShowRoomInfo(false)}
+          onTouchMove={(e) => {
+            e.preventDefault();
+          }}
+          onWheel={(e) => {
+            e.preventDefault();
+          }}
+          style={{
+            touchAction: 'none',
+          }}
+        />
+
+        {/* 房间信息面板 */}
+        <div className='fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-full max-w-md bg-white dark:bg-gray-900 rounded-xl shadow-xl z-[1001] overflow-hidden'>
+          <div
+            className='h-full p-6'
+            data-panel-content
+            onTouchMove={(e) => {
+              e.stopPropagation();
+            }}
+            style={{
+              touchAction: 'auto',
+            }}
+          >
+            {/* 标题栏 */}
+            <div className='flex items-center justify-between mb-6'>
+              <div className='flex items-center gap-3'>
+                <Info className='h-6 w-6 text-blue-500 dark:text-blue-400' />
+                <h3 className='text-xl font-bold text-gray-800 dark:text-gray-200'>房间信息</h3>
+              </div>
+              <button
+                onClick={() => setShowRoomInfo(false)}
+                className='rounded-full p-1.5 text-gray-400 hover:text-gray-600 dark:text-gray-500 dark:hover:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors'
+                aria-label='关闭'
+              >
+                <X className='h-5 w-5' />
+              </button>
+            </div>
+
+            {/* 内容 */}
+            <div className='space-y-4'>
+              {/* 房间基本信息 */}
+              <div className='space-y-3'>
+                <div className='flex items-center justify-between rounded-lg bg-gray-50 dark:bg-gray-800 p-4 border border-gray-200 dark:border-gray-700'>
+                  <span className='text-sm font-medium text-gray-600 dark:text-gray-400'>房间名称</span>
+                  <span className='text-sm font-semibold text-gray-900 dark:text-gray-100'>{currentRoom.name}</span>
+                </div>
+
+                <div className='flex items-center justify-between rounded-lg bg-gray-50 dark:bg-gray-800 p-4 border border-gray-200 dark:border-gray-700'>
+                  <span className='text-sm font-medium text-gray-600 dark:text-gray-400'>房间号</span>
+                  <span className='text-lg font-mono font-bold text-gray-900 dark:text-gray-100'>{currentRoom.id}</span>
+                </div>
+
+                {currentRoom.description && (
+                  <div className='rounded-lg bg-gray-50 dark:bg-gray-800 p-4 border border-gray-200 dark:border-gray-700'>
+                    <span className='text-sm font-medium text-gray-600 dark:text-gray-400 block mb-2'>房间描述</span>
+                    <p className='text-sm text-gray-700 dark:text-gray-300'>{currentRoom.description}</p>
+                  </div>
+                )}
+
+                <div className='flex items-center justify-between rounded-lg bg-gray-50 dark:bg-gray-800 p-4 border border-gray-200 dark:border-gray-700'>
+                  <span className='text-sm font-medium text-gray-600 dark:text-gray-400'>房主</span>
+                  <span className='text-sm font-semibold text-gray-900 dark:text-gray-100'>{currentRoom.ownerName}</span>
+                </div>
+              </div>
+
+              {/* 成员列表 */}
+              <div className='rounded-lg bg-gray-50 dark:bg-gray-800 p-4 border border-gray-200 dark:border-gray-700'>
+                <div className='flex items-center gap-2 mb-3'>
+                  <Users className='h-4 w-4 text-gray-600 dark:text-gray-400' />
+                  <span className='text-sm font-medium text-gray-600 dark:text-gray-400'>成员列表 ({members.length})</span>
+                </div>
+                <div className='space-y-2 max-h-40 overflow-y-auto'>
+                  {members.map((member) => (
+                    <div
+                      key={member.id}
+                      className='flex items-center justify-between bg-white dark:bg-gray-700 rounded-lg p-3 border border-gray-200 dark:border-gray-600'
+                    >
+                      <div className='flex items-center gap-3'>
+                        <div className='w-8 h-8 rounded-full bg-gradient-to-r from-blue-400 to-purple-500 flex items-center justify-center text-white font-bold text-sm'>
+                          {member.name.charAt(0).toUpperCase()}
+                        </div>
+                        <span className='text-sm font-medium text-gray-900 dark:text-gray-100'>{member.name}</span>
+                      </div>
+                      {member.isOwner && (
+                        <span className='text-xs bg-yellow-100 dark:bg-yellow-900/30 text-yellow-700 dark:text-yellow-400 px-2 py-1 rounded-full font-bold'>
+                          房主
+                        </span>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              {/* 操作按钮 */}
+              <button
+                onClick={handleLeaveRoom}
+                className={`w-full flex items-center justify-center gap-2 rounded-lg py-3 font-medium transition-colors ${
+                  isOwner
+                    ? 'bg-red-500 hover:bg-red-600 text-white'
+                    : 'bg-gray-600 hover:bg-gray-700 dark:bg-gray-700 dark:hover:bg-gray-600 text-white'
+                }`}
+              >
+                {isOwner ? (
+                  <>
+                    <XCircle className='h-5 w-5' />
+                    解散房间
+                  </>
+                ) : (
+                  <>
+                    <LogOut className='h-5 w-5' />
+                    退出房间
+                  </>
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      </>
     );
   }
 
   // 最小化状态
   if (isMinimized) {
     return (
-      <div className="fixed bottom-20 right-4 z-[700] flex items-center gap-2 rounded-lg bg-gray-800 px-4 py-2 shadow-2xl md:bottom-4">
-        <MessageCircle className="h-5 w-5 text-white" />
-        <span className="text-sm text-white">聊天室</span>
+      <>
+        {/* 房间信息按钮 */}
         <button
-          onClick={() => setIsMinimized(false)}
-          className="ml-2 rounded p-1 text-gray-400 transition-colors hover:bg-gray-700 hover:text-white"
-          aria-label="展开"
+          onClick={() => setShowRoomInfo(true)}
+          className="fixed bottom-36 right-4 z-[700] flex h-12 w-12 items-center justify-center rounded-full bg-blue-500 text-white shadow-2xl transition-all hover:scale-110 hover:bg-blue-600 md:bottom-20"
+          aria-label="房间信息"
         >
-          <Maximize2 className="h-4 w-4" />
+          <Info className="h-5 w-5" />
         </button>
-        <button
-          onClick={() => setIsOpen(false)}
-          className="rounded p-1 text-gray-400 transition-colors hover:bg-gray-700 hover:text-white"
-          aria-label="关闭"
-        >
-          <X className="h-4 w-4" />
-        </button>
-      </div>
+
+        {/* 最小化的聊天窗口 */}
+        <div className="fixed bottom-20 right-4 z-[700] flex items-center gap-2 rounded-lg bg-gray-800 px-4 py-2 shadow-2xl md:bottom-4">
+          <MessageCircle className="h-5 w-5 text-white" />
+          <span className="text-sm text-white">聊天室</span>
+          <button
+            onClick={() => setIsMinimized(false)}
+            className="ml-2 rounded p-1 text-gray-400 transition-colors hover:bg-gray-700 hover:text-white"
+            aria-label="展开"
+          >
+            <Maximize2 className="h-4 w-4" />
+          </button>
+          <button
+            onClick={() => setIsOpen(false)}
+            className="rounded p-1 text-gray-400 transition-colors hover:bg-gray-700 hover:text-white"
+            aria-label="关闭"
+          >
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+      </>
     );
   }
 
   // 完整聊天窗口
   return (
-    <div className="fixed bottom-20 right-4 z-[700] flex w-80 flex-col rounded-2xl bg-gray-800 shadow-2xl md:bottom-4 md:w-96">
+    <>
+      {/* 房间信息按钮 */}
+      <button
+        onClick={() => setShowRoomInfo(true)}
+        className="fixed bottom-[30rem] right-4 z-[700] flex h-12 w-12 items-center justify-center rounded-full bg-blue-500 text-white shadow-2xl transition-all hover:scale-110 hover:bg-blue-600 md:bottom-[28rem]"
+        aria-label="房间信息"
+      >
+        <Info className="h-5 w-5" />
+      </button>
+
+      {/* 聊天窗口 */}
+      <div className="fixed bottom-20 right-4 z-[700] flex w-80 flex-col rounded-2xl bg-gray-800 shadow-2xl md:bottom-4 md:w-96">
       {/* 头部 */}
       <div className="flex items-center justify-between rounded-t-2xl bg-green-500 px-4 py-3">
         <div className="flex items-center gap-2">
@@ -217,5 +389,6 @@ export default function ChatFloatingWindow() {
         )}
       </div>
     </div>
+    </>
   );
 }

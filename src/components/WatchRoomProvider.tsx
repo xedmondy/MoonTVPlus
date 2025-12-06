@@ -5,6 +5,7 @@ import React, { createContext, useContext, useEffect, useState, useCallback } fr
 import { useWatchRoom } from '@/hooks/useWatchRoom';
 import type { Room, Member, ChatMessage, WatchRoomConfig } from '@/types/watch-room';
 import type { WatchRoomSocket } from '@/lib/watch-room-socket';
+import Toast, { ToastProps } from '@/components/Toast';
 
 interface WatchRoomContextType {
   socket: WatchRoomSocket | null;
@@ -66,8 +67,31 @@ interface WatchRoomProviderProps {
 export function WatchRoomProvider({ children }: WatchRoomProviderProps) {
   const [config, setConfig] = useState<WatchRoomConfig | null>(null);
   const [isEnabled, setIsEnabled] = useState(false);
+  const [toast, setToast] = useState<ToastProps | null>(null);
 
-  const watchRoom = useWatchRoom();
+  // 处理房间删除的回调
+  const handleRoomDeleted = useCallback((data?: { reason?: string }) => {
+    console.log('[WatchRoomProvider] Room deleted:', data);
+
+    // 显示Toast提示
+    if (data?.reason === 'owner_left') {
+      setToast({
+        message: '房主已解散房间',
+        type: 'error',
+        duration: 4000,
+        onClose: () => setToast(null),
+      });
+    } else {
+      setToast({
+        message: '房间已被删除',
+        type: 'info',
+        duration: 3000,
+        onClose: () => setToast(null),
+      });
+    }
+  }, []);
+
+  const watchRoom = useWatchRoom(handleRoomDeleted);
 
   // 加载配置
   useEffect(() => {
@@ -145,6 +169,7 @@ export function WatchRoomProvider({ children }: WatchRoomProviderProps) {
   return (
     <WatchRoomContext.Provider value={contextValue}>
       {children}
+      {toast && <Toast {...toast} />}
     </WatchRoomContext.Provider>
   );
 }
