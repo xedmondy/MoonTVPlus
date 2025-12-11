@@ -176,18 +176,23 @@ export class DbManager {
   }
 
   // ---------- 管理员配置 ----------
-  async getAdminConfig(): Promise<AdminConfig | null> {
-    if (typeof (this.storage as any).getAdminConfig === 'function') {
-      return (this.storage as any).getAdminConfig();
-    }
-    return null;
+async getAdminConfig(): Promise<AdminConfig | null> {
+  if (typeof (this.storage as any).getAdminConfig === 'function') {
+    const config = await (this.storage as any).getAdminConfig();
+    // 确保返回值是解析后的对象（非字符串）
+    return typeof config === 'string' ? JSON.parse(config) : config;
   }
+  return null;
+}
 
-  async saveAdminConfig(config: AdminConfig): Promise<void> {
-    if (typeof (this.storage as any).setAdminConfig === 'function') {
-      await (this.storage as any).setAdminConfig(config);
-    }
+async saveAdminConfig(config: AdminConfig): Promise<void> {
+  if (typeof (this.storage as any).setAdminConfig === 'function') {
+    // 确保存储时统一序列化为字符串
+    await (this.storage as any).setAdminConfig(
+      typeof config === 'string' ? config : JSON.stringify(config)
+    );
   }
+}
 
   // ---------- 跳过片头片尾配置 ----------
   async getSkipConfig(
