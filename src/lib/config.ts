@@ -306,11 +306,7 @@ export async function getConfig(): Promise<AdminConfig> {
     adminConfig = await db.getAdminConfig();
   } catch (e) {
     console.error('获取管理员配置失败:', e);
-  if (!cachedConfig) {
-      adminConfig = await getInitConfig("");
-    } else {
-      adminConfig = cachedConfig; // 使用现有缓存
-    }
+  }
 
   // db 中无配置，执行一次初始化
   if (!adminConfig) {
